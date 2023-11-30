@@ -56,7 +56,9 @@ class GraphExecutor(object):
 
 	def run(self):
 		g = self.graph
+		
 		for i in g.outputs_of(BEGIN):
+			
 			self.run_node(i, None, level=0)
 		self.print_counts()
 		if self.verbose:
@@ -92,6 +94,7 @@ class GraphExecutor(object):
 	def run_node(self, i, input, level=0):
 		g = self.graph
 		node = g[i]
+
 		name = get_name(node)
 		self.tick_in(i, name, level)
 		indent = '  ' * level
@@ -112,7 +115,9 @@ class GraphExecutor(object):
 		try:
 			# print(f'calling {node!r}({input})')
 			start = time.time()
+			
 			if input is None:
+				
 				result = node()
 			else:
 				result = node(input)
@@ -122,15 +127,19 @@ class GraphExecutor(object):
 
 			if result == NOT_MODIFIED:
 				result = input
-
+			
+			
 			if isinstance(result, types.GeneratorType):
+				
 				#print('RESULT IS A GENERATOR')
 				for r in result:
+					
 					self.tick_out(i, name, level)
 					#print(f'[{name}] =gen=> {r}')
 					for j in g.outputs_of(i):
 						self.run_node(j, r, level=level+1)
 			else:
+				
 				self.tick_out(i, name, level)
 				#print(f'RESULT IS {result}')
 				#print(f'[{name}] =ret=> {result}')

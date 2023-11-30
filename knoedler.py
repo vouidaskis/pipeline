@@ -21,7 +21,7 @@ if __name__ == '__main__':
 
 	data = {
 		'header_file': 'knoedler_0.csv',
-		'files_pattern': 'knoedler.csv',
+		'files_pattern': 'test.csv',
 	}
 
 #	factory.production_mode()
@@ -37,6 +37,8 @@ if __name__ == '__main__':
 	with bonobo.parse_args(parser) as options:
 		try:
 			data_path = project_data_path('knoedler')
+			
+
 			pipeline = KnoedlerFilePipeline( # KnoedlerPipeline
 				data_path,
 				data=data,
@@ -48,6 +50,8 @@ if __name__ == '__main__':
 			if print_dot:
 				print(pipeline.get_graph()._repr_dot_())
 			else:
+				
 				pipeline.run(**options)
+
 		except RuntimeError:
 			raise ValueError()

@@ -449,7 +449,9 @@ class ExtractKeyedValues(Configurable):
 		self.__name__ = f'{type(self).__name__} ({self.key})'
 
 	def __call__(self, data, *args, **kwargs):
+		
 		for a in data.get(self.key, []):
+			
 			child = {k: v for k, v in a.items()}
 			child.update({
 				'parent_data': data,
@@ -475,9 +477,11 @@ class ExtractKeyedValue(Configurable):
 		self.__name__ = f'{type(self).__name__} ({self.key})'
 
 	def __call__(self, data, *args, **kwargs):
+		
 		a = data.get(self.key)
 		if a:
 			child = {k: v for k, v in a.items()}
+		#	import pdb; pdb.set_trace()
 			child.update({
 				'parent_data': data,
 			})
@@ -487,6 +491,7 @@ class RecursiveExtractKeyedValue(ExtractKeyedValue):
 	include_self = Option(bool, default=True)
 
 	def __call__(self, data, *args, **kwargs):
+		import pdb; pdb.set_trace()
 		if self.include_self:
 			a = data
 		else:

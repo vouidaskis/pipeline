@@ -552,7 +552,7 @@ class AddArtists(ProvenanceBase):
 	def __call__(self, data:dict, *, make_la_person, attribution_modifiers, attribution_group_types, attribution_group_names):
 		'''Add modeling for artists as people involved in the production of an object'''
 		hmo = get_crom_object(data['_object'])
-
+		import pdb; pdb.set_trace()
 		self.model_artists_with_modifers(data, hmo, attribution_modifiers, attribution_group_types, attribution_group_names)
 		return data
 
@@ -832,7 +832,8 @@ class TransactionSwitch:
 	def __call__(self, data:dict):
 		rec = data['book_record']
 		transaction = rec['transaction']
-		if transaction in ('Sold', 'Destroyed', 'Stolen', 'Lost', 'Unsold', 'Returned'):
+		if transaction in ('Sold', 'Destroyed', 'Stolen', 'Lost', 'Unsold', 'Returned','Expensed', 'Exchanged'):
+			
 			yield {transaction: data}
 		else:
 			warnings.warn(f'TODO: handle transaction type {transaction}')
@@ -854,8 +855,15 @@ class TransactionHandler(ProvenanceBase):
 	def _empty_tx(self, data, incoming=False, purpose=None):
 		tx_uri = self.helper.transaction_uri_for_record(data, incoming)
 		tx_type = data.get('book_record', {}).get('transaction', 'Sold')
+		
 		if purpose == 'returning':
 			tx = vocab.make_multitype_obj(vocab.SaleAsReturn, vocab.ProvenanceEntry, ident=tx_uri)
+		elif purpose == 'exchange':
+			
+			tx = vocab.make_multitype_obj(vocab.Exchange, vocab.ProvenanceEntry, ident=tx_uri)
+		elif purpose == 'expensed':
+			
+			tx = vocab.make_multitype_obj(vocab.Expensed, vocab.ProvenanceEntry, ident=tx_uri)
 		else:
 			tx = vocab.ProvenanceEntry(ident=tx_uri)
 		
@@ -871,12 +879,17 @@ class TransactionHandler(ProvenanceBase):
 		
 		hmo = get_crom_object(odata)
 		sn_ident = self.helper.stock_number_identifier(odata, date)
-
+			
 		sellers = data['purchase_seller']
-		price_info = data.get('purchase')
+		
+		if data.get('purchase')['flag'] is True:
+			
+			price_info = data.get('purchase')
+		else:
+			price_info = data.get('purchase_knoedler_share')
+					
 		if price_info and not len(sellers):
 			# this inventorying has a "purchase" amount that is an evaluated worth amount
-#			print(data['pi_record_no'])
 			amnt = get_crom_object(price_info)
 			assignment = vocab.AppraisingAssignment(ident='', label=f'Evaluated worth of {sn_ident}')
 			knoedler = self.helper.static_instances.get_instance('Group', 'knoedler')
@@ -885,7 +898,20 @@ class TransactionHandler(ProvenanceBase):
 			assignment.assigned = amnt
 			if amnt:
 				amnt.classified_as = model.Type(ident='http://vocab.getty.edu/aat/300412096', label='Valuation')
-			assignment.assigned_to = hmo
+			if data.get('purchase')['flag'] is True:
+				data.get('purchase')['flag'] = False 
+				assignment.assigned_to = hmo
+			return assignment
+		elif price_info and not len(data.get('purchase_buyer')) and 'amount' in data['purchase'] :
+			import pdb; pdb.set_trace()
+			amnt = get_crom_object(price_info)
+			assignment = vocab.AppraisingAssignment(ident='', label=f'Evaluated worth of {sn_ident}')
+			knoedler = self.helper.static_instances.get_instance('Group', 'knoedler')
+			assignment.carried_out_by = knoedler
+			assignment.assigned_property = 'dimension'
+			assignment.assigned = amnt
+			if amnt:
+				amnt.classified_as = model.Type(ident='http://vocab.getty.edu/aat/300412096', label='Valuation')
 			return assignment
 		return None
 
@@ -904,7 +930,7 @@ class TransactionHandler(ProvenanceBase):
 		inv.identified_by = model.Name(ident='', content=inv_label)
 		inv.encountered = hmo
 		self.set_date(inv, data, 'entry_date')
-
+		# import pdb;pdb.set_trace()
 		return inv
 
 	def ownership_right(self, frac, person=None):
@@ -975,10 +1001,10 @@ class TransactionHandler(ProvenanceBase):
 
 			data['_people'].extend(people)
 
-	def _add_prov_entry_payment(self, data:dict, tx, knoedler_price_part, price_info, people, people_agents, shared_people, shared_people_agents, date, incoming):
+	def _add_prov_entry_payment(self, data:dict, tx, knoedler_price_part, price_info, people, people_agents, shared_people, shared_people_agents, date, incoming, purpose=None):
 		knoedler = self.helper.static_instances.get_instance('Group', 'knoedler')
 		knoedler_group = [knoedler]
-
+		
 		sales_record = get_crom_object(data['_record'])
 		hmo = get_crom_object(data['_object'])
 		sn_ident = self.helper.stock_number_identifier(data['_object'], date)
@@ -1007,11 +1033,12 @@ class TransactionHandler(ProvenanceBase):
 		people_ids = set([x.id for x in people])
 		knoedler_group_ids = set([x.id for x in knoedler_group])
 		joint_owner_also_seller_or_buyer_id = people_ids.intersection(knoedler_group_ids)
-
+		
 		if not amnt and knoedler_price_part_amnt:
 			amnt = knoedler_price_part_amnt
 
 		paym = None
+		
 		if amnt:
 			tx_uri = tx.id
 			payment_id = tx_uri + '-Payment'
@@ -1022,44 +1049,20 @@ class TransactionHandler(ProvenanceBase):
 			# P9->E13->p141->E97->P90->full_amount
 			# P9->E13->p141->E97->P180->currency
 			# P9->E13->p141->E97->p67i->E33->P190->note
-			# if not joint_owner_also_seller_or_buyer_id:
-			
-			# else:
-			# star csv data is a string containing all csv data, so split it in lines on '\n' to get each value
-			lines = data['star_csv_data'].split('\n')
-			# find price amount value
-			prcamnt = next((line for line in lines if 'price_amount' in line), None)
-			# take the actual value of price amount (only the number)
-			prcamnt_value = "".join([ele for ele in prcamnt if ele.isdigit()])
-			# check if this value is equal to the current value that is being modeled (may be purch amount and not price amount)
-			# if it is really the price amount set current to that amount, else set current to purchase amount
-			if 'value' in amnt.__dict__:
-				if prcamnt_value == str(amnt.value).rstrip('0').rstrip('.'):
-					currnt = next((line for line in lines if 'price_amount' in line), None)
-					currnt_knoed_part = None
-				else:
-					currnt = next((line for line in lines if 'purch_amount' in line), None)
-					currnt_knoed_part = next((line for line in lines if 'knoedpurch_amt' in line), None)
-				# check if there are brackets in the amount (price or purch, whatever is being modeled currently in the function)			
-				if '[' and ']' in currnt:
-
-					assignment_id = tx_uri + '-Attribute assignment'
-					assignment = model.AttributeAssignment(ident=assignment_id, label=f"Attribute assignment for {sn_ident}")
-					assignment.assigned = amnt
-					for kp in knoedler_group:
-						assignment.carried_out_by = kp
-					tx.part = assignment
-				
-				else: 
-					paym.paid_amount = amnt
-					for kp in knoedler_group:
-						if incoming:
-							paym.paid_from = kp
-						else:
-							paym.paid_to = kp
-			
-			# prcamnt = next((line for line in lines if 'price_amount' in line), None)
-
+			if not joint_owner_also_seller_or_buyer_id:
+				paym.paid_amount = amnt
+				for kp in knoedler_group:
+					if incoming:
+						paym.paid_from = kp
+					else:
+						paym.paid_to = kp
+			else:
+				assignment_id = tx_uri + '-Attribute assignment'
+				assignment = model.AttributeAssignment(ident=assignment_id, label=f"Attribute assignment for {sn_ident}")
+				assignment.assigned = amnt
+				for kp in knoedler_group:
+					assignment.carried_out_by = kp
+				tx.part = assignment
 			for p in shared_people_agents:
 				# when an agent is acting on behalf of the buyer/seller, model their involvement in a sub-activity
 				subpaym_role = 'Buyer' if incoming else 'Seller'
@@ -1145,6 +1148,10 @@ class TransactionHandler(ProvenanceBase):
 		dir = 'In' if incoming else 'Out'
 		if purpose == 'returning':
 			dir_label = 'Knoedler return'
+		elif purpose == 'exchange':
+			dir_label = 'Knoedler exchange'
+		elif purpose == 'expensed':
+			dir_label = 'Knoedler expensed'
 		else:
 			dir_label = 'Knoedler Purchase' if incoming else 'Knoedler Sale'
 		acq_id = self.helper.make_proj_uri('ACQ', dir, book_id, page_id, row_id)
@@ -1172,7 +1179,12 @@ class TransactionHandler(ProvenanceBase):
 			subacq.carried_out_by = p
 			acq.part = subacq
 		for p in to_people:
-			acq.transferred_title_to = p
+			if data.get('sale_buyer') :
+				acq.transferred_title_to = p
+			else:
+				if ( purpose !='exchange' and purpose !='expensed'):
+					acq.transferred_title_to = p
+
 		for p in to_agents:
 			# when an agent is acting on behalf of the buyer, model their involvement in a sub-activity
 			subacq = model.Activity(ident='', label="Buyer's agent's role in acquisition")
@@ -1219,8 +1231,8 @@ class TransactionHandler(ProvenanceBase):
 		
 		odata = data['_object']
 		sales_record = get_crom_object(data['_record'])
-
 		tx = self._empty_tx(data, incoming, purpose=purpose)
+		
 		tx_uri = tx.id
 		if 'knoedler_number' not in odata:
 			tx.referred_to_by = vocab.Note(ident='', content='No Knoedler stock number was assigned to the object that is the subject of this provenance activity.')
@@ -1228,7 +1240,6 @@ class TransactionHandler(ProvenanceBase):
 		tx_data = add_crom_data(data={'uri': tx_uri}, what=tx)
 		if date_key:
 			self.set_date(tx, data, date_key)
-
 		role = 'seller' if incoming else 'buyer'
 		people_data = [
 			self.helper.copy_source_information(p, data)
@@ -1329,12 +1340,14 @@ class TransactionHandler(ProvenanceBase):
 			from_agents = knoedler_group_agents
 			to_people = people
 			to_agents = people_agents
+
 		if incoming:
 			self._add_prov_entry_rights(data, tx, shared_people, incoming)
-		self._add_prov_entry_payment(data, tx, knoedler_price_part, price_info, people, people_agents, shared_people, knoedler_group_agents, date, incoming)
+		
+		self._add_prov_entry_payment(data, tx, knoedler_price_part, price_info, people, people_agents, shared_people, knoedler_group_agents, date, incoming, purpose=purpose)
 		self._add_prov_entry_acquisition(data, tx, from_people, from_agents, to_people, to_agents, date, incoming, purpose=purpose)
-
-# 		print('People:')
+		
+# 		pri	nt('People:')
 # 		for p in people:
 # 			print(f'- {getattr(p, "_label", "(anonymous)")}')
 # 		print('Shared People:')
@@ -1356,8 +1369,17 @@ class TransactionHandler(ProvenanceBase):
 		shared_people = []
 		for p in sellers:
 			self.helper.copy_source_information(p, data)
-		in_tx = self._prov_entry(data, 'entry_date', sellers, purch_info, incoming=True, buy_sell_modifiers=buy_sell_modifiers)
-		out_tx = self._prov_entry(data, 'entry_date', sellers, sale_info, incoming=False, purpose='returning', buy_sell_modifiers=buy_sell_modifiers)
+		
+		if data.get('parent_data').get('Expensed') is not None:
+			in_tx = self._prov_entry(data, 'entry_date', sellers, purch_info, incoming=True, buy_sell_modifiers=buy_sell_modifiers)
+			out_tx = self._prov_entry(data, 'entry_date', sellers, sale_info, incoming=False, purpose='expensed', buy_sell_modifiers=buy_sell_modifiers)
+		elif data.get('parent_data').get('Returned') is not None :
+			in_tx = self._prov_entry(data, 'entry_date', sellers, purch_info, incoming=True, buy_sell_modifiers=buy_sell_modifiers)
+			out_tx = self._prov_entry(data, 'entry_date', sellers, sale_info, incoming=False, purpose='returning', buy_sell_modifiers=buy_sell_modifiers)
+		else :
+			
+			in_tx = self._prov_entry(data, 'entry_date', sellers, purch_info, incoming=True, buy_sell_modifiers=buy_sell_modifiers)
+			out_tx = self._prov_entry(data, 'entry_date', sellers, sale_info, incoming=False, purpose='exchange', buy_sell_modifiers=buy_sell_modifiers)
 		return (in_tx, out_tx)
 
 	def add_incoming_tx(self, data, buy_sell_modifiers):
@@ -1503,12 +1525,14 @@ class ModelDestruction(TransactionHandler):
 		return data
 
 class ModelTheftOrLoss(TransactionHandler):
+	
 	helper = Option(required=True)
 	make_la_person = Service('make_la_person')
 	buy_sell_modifiers = Service('buy_sell_modifiers')
 	transaction_classification = Service('transaction_classification')
 
 	def __call__(self, data:dict, make_la_person, buy_sell_modifiers, transaction_classification):
+
 		rec = data['book_record']
 		pi_rec = data['pi_record_no']
 		hmo = get_crom_object(data['_object'])
@@ -1633,18 +1657,30 @@ class ModelSale(TransactionHandler):
 		if not in_tx:
 			if len(sellers):
 				# if there are sellers in this record, then model the incoming transaction.
+				#import pdb; pdb.set_trace()
 				in_tx = self.add_incoming_tx(data, buy_sell_modifiers)
 				tx_cl = transaction_classification.get('Purchase')
 				in_tx.classified_as = model.Type(ident=tx_cl.get('url'), label=tx_cl.get('label'))
 			else:
 				# if there are no sellers, then this is an object that was previously unsold, and should be modeled as an inventory activity
+				
+				#import pdb; pdb.set_trace()
 				inv = self._new_inventorying(data)
+				
+				data.get('purchase')['flag'] = True 
 				appraisal = self._apprasing_assignment(data)
 				inv_label = inv._label
+				
 				in_tx = self._empty_tx(data, incoming=True)
+				
+				appraisal_kn = self._apprasing_assignment(data)
 				in_tx.part = inv
+				if appraisal_kn:
+					in_tx.part = appraisal_kn
+				
 				if appraisal:
 					in_tx.part = appraisal
+				
 				in_tx.identified_by = model.Name(ident='', content=inv_label)
 				in_tx._label = inv_label
 				in_tx_data = add_crom_data(data={'uri': in_tx.id, 'label': inv_label}, what=in_tx)
@@ -1674,12 +1710,17 @@ class ModelReturn(ModelSale):
 	transaction_classification = Service('transaction_classification')
 
 	def __call__(self, data:dict, make_la_person, buy_sell_modifiers, transaction_classification):
+		
 		sellers = data.get('purchase_seller', [])
 		buyers = data.get('sale_buyer', [])
-		if not buyers:
+		
+		if not buyers and data.get('parent_data').get('Returned') is not None :
+			
 			buyers = sellers.copy()
 			data['sale_buyer'] = buyers
+		
 		in_tx, out_tx = self.add_return_tx(data, buy_sell_modifiers)
+		
 		in_tx_cl = transaction_classification.get('Purchase')
 		in_tx.classified_as = model.Type(ident=in_tx_cl.get('url'), label=in_tx_cl.get('label'))
 		yield from super().__call__(data, make_la_person, buy_sell_modifiers, transaction_classification,in_tx=in_tx, out_tx=out_tx)
@@ -1721,6 +1762,8 @@ class ModelInventorying(TransactionHandler):
 	transaction_classification = Service('transaction_classification')
 
 	def __call__(self, data:dict, make_la_person, buy_sell_modifiers, transaction_classification):
+		#import pdb; pdb.set_trace()
+
 		rec = data['book_record']
 		pi_rec = data['pi_record_no']
 		odata = data['_object']
@@ -1738,13 +1781,14 @@ class ModelInventorying(TransactionHandler):
 
 		hmo = get_crom_object(odata)
 		object_label = f'“{hmo._label}”'
-
+		
 		sn_ident = self.helper.stock_number_identifier(odata, date)
-
+		data.get('purchase')['flag'] = True 
 		inv = self._new_inventorying(data)
 		appraisal = self._apprasing_assignment(data)
+		
+		aparsia_kn = self._apprasing_assignment(data)
 		inv_label = inv._label
-
 		tx_out = self._empty_tx(data, incoming=False)
 		tx_out._label = inv_label
 		tx_out.identified_by = model.Name(ident='', content=inv_label)
@@ -1766,8 +1810,11 @@ class ModelInventorying(TransactionHandler):
 		self.set_date(inv, data, 'entry_date')
 
 		tx_out.part = inv
+		if aparsia_kn:
+			tx_out.part = aparsia_kn
 		if appraisal:
 			tx_out.part = appraisal
+		
 		self.set_date(tx_out, data, 'entry_date')
 
 		tx_out_data = add_crom_data(data={'uri': tx_out.id, 'label': inv_label}, what=tx_out)
@@ -2193,6 +2240,18 @@ class KnoedlerPipeline(PipelineBase):
 			_input=tx.output
 		)
 
+		expensed = graph.add_chain(
+			ExtractKeyedValue(key='Expensed'),
+			ModelReturn(helper=self.helper),
+			_input=tx.output
+		)
+
+		exchanged = graph.add_chain(
+			ExtractKeyedValue(key='Exchanged'),
+			ModelReturn(helper=self.helper),
+			_input=tx.output
+		)
+
 		destruction = graph.add_chain(
 			ExtractKeyedValue(key='Destroyed'),
 			ModelDestruction(helper=self.helper),
@@ -2217,11 +2276,13 @@ class KnoedlerPipeline(PipelineBase):
 			self.add_serialization_chain(graph, activities.output, model=self.models['Inventorying'])
 
 		# people and prov entries can come from any of these chains:
-		for branch in (sale, destruction, theft, loss, inventorying, unsold_purchases, returned):
+		
+		for branch in (sale, destruction, theft, loss, inventorying, unsold_purchases, returned, expensed, exchanged):
+			
 			prov_entry = graph.add_chain( ExtractKeyedValues(key='_prov_entries'), _input=branch.output )
 			people = graph.add_chain( ExtractKeyedValues(key='_people'), _input=branch.output )
 			locations = graph.add_chain( ExtractKeyedValues(key='_locations'), _input=branch.output )
-
+			#import pdb; pdb.set_trace()
 			if serialize:
 				self.add_serialization_chain(graph, prov_entry.output, model=self.models['ProvenanceEntry'])
 				self.add_serialization_chain(graph, locations.output, model=self.models['Place'])
