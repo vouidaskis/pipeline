@@ -204,13 +204,6 @@ class AddPerson(Configurable):
 		new_string = record.replace(";","|")
 		return new_string
 
-
-						
-
-	
-					
-
-
 	def handle_statements(self, data):
 		record = get_crom_object(data['_entry_record'])
 				
@@ -446,8 +439,8 @@ class AddPerson(Configurable):
 		active_args = self.helper.person_identity.clamped_timespan_args(data, name)
 		if cb:
 			# This is an Organization
-			with suppress(KeyError):
-				del data['nationality']
+			# with suppress(KeyError):
+			# 	del data['nationality']
 			if 'museum' in type:
 				data['object_type'].append(vocab.MuseumOrg)
 			if 'institution' in type:
