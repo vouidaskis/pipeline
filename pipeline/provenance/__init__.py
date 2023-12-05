@@ -304,7 +304,7 @@ class ProvenanceBase(Configurable):
 		GROUP_MODS = {k for k, v in attribution_group_types.items() if v in GROUP_TYPES}
 
 		non_artist_assertions = people
-
+		
 		if '_record' not in data:
 			sales_record = get_crom_objects(data.get('_records', []))
 		else:
@@ -314,7 +314,7 @@ class ProvenanceBase(Configurable):
 			hmo_label = f'{hmo._label}'
 		except AttributeError:
 			hmo_label = 'object'
-
+		
 		# 2. Determine if the non-artist records represent a disjunction. If all such records have an "or" modifier, we will represent all the people as a Group, and classify it to indicate that one and only one of the named people was the actor. If there is at least one 'or' modifier, but not all of the records have 'or', then we model each such record with uncertainty.
 		non_artist_all_mods = {m.lower().strip() for a in non_artist_assertions for m in a.get('attrib_mod_auth', '').split(';')} - {''}
 		non_artist_group_flag = len(non_artist_assertions) and all(['or' in a['modifiers'] for a in non_artist_assertions])
@@ -338,6 +338,7 @@ class ProvenanceBase(Configurable):
 
 		# 3. Model all the non-artist records as an appropriate property/relationship of the object or production event:
 		for seq_no, a_data in enumerate(non_artist_assertions):
+			
 			a_data = self.model_person_or_group(data, a_data, attribution_group_types, attribution_group_names, seq_no=seq_no, role='NonArtist', sales_record=sales_record)
 			artist_label = a_data.get('label')
 			person = get_crom_object(a_data)
@@ -354,6 +355,7 @@ class ProvenanceBase(Configurable):
 					attrib_assignment_classes.append(vocab.PossibleAssignment)
 			
 			if STYLE_OF.intersects(mods):
+				
 				attribute_assignment_id = self.helper.prepend_uri_key(prod_event.id, f'ASSIGNMENT,NonArtist-{seq_no}')
 				assignment = vocab.make_multitype_obj(*attrib_assignment_classes, ident=attribute_assignment_id, label=f'In the style of {artist_label}')
 				prod_event.attributed_by = assignment
@@ -386,6 +388,7 @@ class ProvenanceBase(Configurable):
 
 				original_subevent_id = original_event_id + f'-{seq_no}' # TODO: fix for the case of post-sales merging
 				original_subevent = model.Production(ident=original_subevent_id, label=f'Production sub-event for {artist_label}')
+				
 				original_event.part = original_subevent
 				original_subevent.carried_out_by = person
 
@@ -402,10 +405,12 @@ class ProvenanceBase(Configurable):
 				data['_original_objects'].append(add_crom_data(data={'uri': original_id}, what=original_hmo))
 				self.populate_original_object_visual_item(data['_original_objects'], data['object'], original_hmo, sales_record, original_label, seq_no)
 			else:
+				
 				warnings.warn(f'Unrecognized non-artist attribution modifers: {mods}')
 
 	def model_object_artists(self, data, people, hmo, prod_event, attribution_modifiers, attribution_group_types, attribution_group_names, all_uncertain=False):
 		FORMERLY_ATTRIBUTED_TO = attribution_modifiers['formerly attributed to']
+		
 		POSSIBLY = attribution_modifiers['possibly by']
 		UNCERTAIN = attribution_modifiers['uncertain']
 		ATTRIBUTED_TO = attribution_modifiers['attributed to']
@@ -544,12 +549,27 @@ class ProvenanceBase(Configurable):
 								assignment.used_specific_object = sale
 						else:
 							assignment.used_specific_object = sales_record
+
 						assignment.referred_to_by = vocab.Note(ident='', content=verbatim_mods)
 						assignment.carried_out_by = self.helper.static_instances.get_instance('Group', 'knoedler')
+												
 					else:
+						attribute_assignment_id = self.helper.prepend_uri_key(prod_event.id, f'ASSIGNMENT,NonArtist-{seq_no}')
+						ident = person.__dict__['_label'] +artist_label
+						assignment = vocab.make_multitype_obj(*attrib_assignment_classes, ident=ident, label='')
+						prod_event.attributed_by = assignment
+						assignment.assigned_property = 'carried_out_by'
+						assignment.assigned = person
+						if isinstance(sales_record, list):
+							for sale in sales_record:
+								assignment.used_specific_object = sale
+						else:
+							assignment.used_specific_object = sales_record
+						assignment.carried_out_by = self.helper.static_instances.get_instance('Group', 'knoedler')
 						subevent = model.Production(ident=subevent_id, label=f'Production sub-event for {artist_label}')
 						subevent.carried_out_by = person
 						prod_event.part = subevent
+						
 
 	def model_artists_with_modifers(self, data:dict, hmo, attribution_modifiers, attribution_group_types, attribution_group_names):
 		'''Add modeling for artists as people involved in the production of an object'''
@@ -562,7 +582,7 @@ class ProvenanceBase(Configurable):
 			hmo_label = f'{hmo._label}'
 		except AttributeError:
 			hmo_label = 'object'
-
+		#import pdb; pdb.set_trace()
 		STYLE_OF = attribution_modifiers['style of']
 		ATTRIBUTED_TO = attribution_modifiers['attributed to']
 		COPY_AFTER = attribution_modifiers['copy after']
@@ -615,7 +635,7 @@ class ProvenanceBase(Configurable):
 		
 		# 2--3
 		self.model_object_influence(data, non_artist_assertions, hmo, prod_event, attribution_modifiers, attribution_group_types, attribution_group_names, all_uncertain=uncertain)
-
+		
 		# 5
 		self.model_object_artists(data, artist_assertions, hmo, prod_event, attribution_modifiers, attribution_group_types, attribution_group_names, all_uncertain=uncertain)
 		

@@ -481,7 +481,7 @@ class ExtractKeyedValue(Configurable):
 		a = data.get(self.key)
 		if a:
 			child = {k: v for k, v in a.items()}
-		#	import pdb; pdb.set_trace()
+		
 			child.update({
 				'parent_data': data,
 			})
@@ -491,7 +491,7 @@ class RecursiveExtractKeyedValue(ExtractKeyedValue):
 	include_self = Option(bool, default=True)
 
 	def __call__(self, data, *args, **kwargs):
-		import pdb; pdb.set_trace()
+		
 		if self.include_self:
 			a = data
 		else:

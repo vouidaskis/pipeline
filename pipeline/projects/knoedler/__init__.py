@@ -552,8 +552,9 @@ class AddArtists(ProvenanceBase):
 	def __call__(self, data:dict, *, make_la_person, attribution_modifiers, attribution_group_types, attribution_group_names):
 		'''Add modeling for artists as people involved in the production of an object'''
 		hmo = get_crom_object(data['_object'])
-		import pdb; pdb.set_trace()
+		
 		self.model_artists_with_modifers(data, hmo, attribution_modifiers, attribution_group_types, attribution_group_names)
+		
 		return data
 
 class PopulateKnoedlerObject(Configurable, pipeline.linkedart.PopulateObject):
@@ -903,7 +904,7 @@ class TransactionHandler(ProvenanceBase):
 				assignment.assigned_to = hmo
 			return assignment
 		elif price_info and not len(data.get('purchase_buyer')) and 'amount' in data['purchase'] :
-			import pdb; pdb.set_trace()
+			
 			amnt = get_crom_object(price_info)
 			assignment = vocab.AppraisingAssignment(ident='', label=f'Evaluated worth of {sn_ident}')
 			knoedler = self.helper.static_instances.get_instance('Group', 'knoedler')
@@ -930,7 +931,6 @@ class TransactionHandler(ProvenanceBase):
 		inv.identified_by = model.Name(ident='', content=inv_label)
 		inv.encountered = hmo
 		self.set_date(inv, data, 'entry_date')
-		# import pdb;pdb.set_trace()
 		return inv
 
 	def ownership_right(self, frac, person=None):
@@ -1040,29 +1040,56 @@ class TransactionHandler(ProvenanceBase):
 		paym = None
 		
 		if amnt:
-			tx_uri = tx.id
-			payment_id = tx_uri + '-Payment'
-			paym = model.Payment(ident=payment_id, label=f'Payment for {sn_ident}')
-			tx.part = paym
-			# If a joint owner is a seller or a buyer the payment node is empty and all the monetary ammount's information is moved to 
-			# AttributeAssignment -> Monetary Ammount
-			# P9->E13->p141->E97->P90->full_amount
-			# P9->E13->p141->E97->P180->currency
-			# P9->E13->p141->E97->p67i->E33->P190->note
-			if not joint_owner_also_seller_or_buyer_id:
-				paym.paid_amount = amnt
-				for kp in knoedler_group:
-					if incoming:
-						paym.paid_from = kp
-					else:
-						paym.paid_to = kp
+			if  (purpose =='exchange' or purpose =='expensed') and not len(data.get('purchase_buyer')):
+				data.get('purchase')['flag'] = True 
+				appraisal = self._apprasing_assignment(data)
+				if appraisal:
+					tx.part = appraisal
+				
+
 			else:
-				assignment_id = tx_uri + '-Attribute assignment'
-				assignment = model.AttributeAssignment(ident=assignment_id, label=f"Attribute assignment for {sn_ident}")
-				assignment.assigned = amnt
-				for kp in knoedler_group:
-					assignment.carried_out_by = kp
-				tx.part = assignment
+			
+				tx_uri = tx.id
+				payment_id = tx_uri + '-Payment'
+				paym = model.Payment(ident=payment_id, label=f'Payment for {sn_ident}')
+				tx.part = paym
+				# If a joint owner is a seller or a buyer the payment node is empty and all the monetary ammount's information is moved to 
+				# AttributeAssignment -> Monetary Ammount
+				# P9->E13->p141->E97->P90->full_amount
+				# P9->E13->p141->E97->P180->currency
+				# P9->E13->p141->E97->p67i->E33->P190->note
+				lines = data['star_csv_data'].split('\n')
+				# find price amount value
+				prcamnt = next((line for line in lines if 'price_amount' in line), None)
+				# take the actual value of price amount (only the number)
+				prcamnt_value = "".join([ele for ele in prcamnt if ele.isdigit()])
+				# check if this value is equal to the current value that is being modeled (may be purch amount and not price amount)
+				# if it is really the price amount set current to that amount, else set current to purchase amount
+				if 'value' in amnt.__dict__:
+					if prcamnt_value == str(amnt.value).rstrip('0').rstrip('.'):
+						currnt = next((line for line in lines if 'price_amount' in line), None)
+						currnt_knoed_part = None
+					else:
+						currnt = next((line for line in lines if 'purch_amount' in line), None)
+						currnt_knoed_part = next((line for line in lines if 'knoedpurch_amt' in line), None)
+					# check if there are brackets in the amount (price or purch, whatever is being modeled currently in the function)			
+					if '[' and ']' in currnt:
+
+						assignment_id = tx_uri + '-Attribute assignment'
+						assignment = model.AttributeAssignment(ident=assignment_id, label=f"Attribute assignment for {sn_ident}")
+						assignment.assigned = amnt
+						for kp in knoedler_group:
+							assignment.carried_out_by = kp
+						tx.part = assignment
+					
+					else: 
+						paym.paid_amount = amnt
+						for kp in knoedler_group:
+							if incoming:
+								paym.paid_from = kp
+							else:
+								paym.paid_to = kp
+
 			for p in shared_people_agents:
 				# when an agent is acting on behalf of the buyer/seller, model their involvement in a sub-activity
 				subpaym_role = 'Buyer' if incoming else 'Seller'
@@ -1085,11 +1112,9 @@ class TransactionHandler(ProvenanceBase):
 					shared_paym = model.Payment(ident=shared_payment_id, label=f"{person._label} share of payment for {sn_ident}")
 					# check brackets for purch knoed as well and put it as valuation if true (not partial payment)
 					if currnt_knoed_part and '[' and ']' in currnt_knoed_part:
-						# import pdb; pdb.set_trace()
 						assignment_id = tx_uri + '-Attribute assignment'
 						assignment = model.AttributeAssignment(ident=assignment_id, label=f"Attribute assignment for {sn_ident}")
 						assignment.assigned = part_amnt
-						# import pdb; pdb.set_trace()
 						if 'referred_to_by' in assignment.assigned[0].__dict__:
 							# it's only knoedler's amount, so change the "shared" note in assignment
 							assignment.assigned[0].referred_to_by[0].content = 'Knoedler amount'
@@ -1104,7 +1129,7 @@ class TransactionHandler(ProvenanceBase):
 							shared_paym.paid_amount = part_amnt
 						
 						if incoming:
-							# import pdb; pdb.set_trace()
+							
 							shared_paym.paid_from = person
 							# Partial payment of share from Knoedler to joint owner who is also the seller
 							if joint_owner_also_seller_or_buyer_id:
@@ -1377,9 +1402,9 @@ class TransactionHandler(ProvenanceBase):
 			in_tx = self._prov_entry(data, 'entry_date', sellers, purch_info, incoming=True, buy_sell_modifiers=buy_sell_modifiers)
 			out_tx = self._prov_entry(data, 'entry_date', sellers, sale_info, incoming=False, purpose='returning', buy_sell_modifiers=buy_sell_modifiers)
 		else :
-			
 			in_tx = self._prov_entry(data, 'entry_date', sellers, purch_info, incoming=True, buy_sell_modifiers=buy_sell_modifiers)
 			out_tx = self._prov_entry(data, 'entry_date', sellers, sale_info, incoming=False, purpose='exchange', buy_sell_modifiers=buy_sell_modifiers)
+		
 		return (in_tx, out_tx)
 
 	def add_incoming_tx(self, data, buy_sell_modifiers):
@@ -1657,14 +1682,12 @@ class ModelSale(TransactionHandler):
 		if not in_tx:
 			if len(sellers):
 				# if there are sellers in this record, then model the incoming transaction.
-				#import pdb; pdb.set_trace()
 				in_tx = self.add_incoming_tx(data, buy_sell_modifiers)
 				tx_cl = transaction_classification.get('Purchase')
 				in_tx.classified_as = model.Type(ident=tx_cl.get('url'), label=tx_cl.get('label'))
 			else:
 				# if there are no sellers, then this is an object that was previously unsold, and should be modeled as an inventory activity
 				
-				#import pdb; pdb.set_trace()
 				inv = self._new_inventorying(data)
 				
 				data.get('purchase')['flag'] = True 
@@ -1762,7 +1785,6 @@ class ModelInventorying(TransactionHandler):
 	transaction_classification = Service('transaction_classification')
 
 	def __call__(self, data:dict, make_la_person, buy_sell_modifiers, transaction_classification):
-		#import pdb; pdb.set_trace()
 
 		rec = data['book_record']
 		pi_rec = data['pi_record_no']
@@ -1971,7 +1993,7 @@ class KnoedlerPipeline(PipelineBase):
 					
 			place = make_tgn_place(tgn_data, self.helper.make_shared_uri, tgn_places)
 			instances[tgn_id] = place
-		# import pdb; pdb.set_trace()
+
 		print(f"Completed in {timeit.default_timer() - start}")
 		return instances
 
@@ -2282,7 +2304,7 @@ class KnoedlerPipeline(PipelineBase):
 			prov_entry = graph.add_chain( ExtractKeyedValues(key='_prov_entries'), _input=branch.output )
 			people = graph.add_chain( ExtractKeyedValues(key='_people'), _input=branch.output )
 			locations = graph.add_chain( ExtractKeyedValues(key='_locations'), _input=branch.output )
-			#import pdb; pdb.set_trace()
+
 			if serialize:
 				self.add_serialization_chain(graph, prov_entry.output, model=self.models['ProvenanceEntry'])
 				self.add_serialization_chain(graph, locations.output, model=self.models['Place'])
